@@ -1,3 +1,4 @@
+import LoginScreen from './LoginScreen';
 import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 
@@ -120,6 +121,20 @@ function StatusPill({ status }) {
    MAIN APP
    ============================================================ */
 export default function App() {
+
+  const [user, setUser] =
+    useState(() => {
+
+      const saved =
+        localStorage.getItem(
+          'fleetsync_user'
+        );
+
+      return saved
+        ? JSON.parse(saved)
+        : null;
+
+    });
   /* -- navigation -- */
   const [view, setView]               = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -134,6 +149,7 @@ export default function App() {
   const [search, setSearch]           = useState('');
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState('');
+
 
   /* -- modals -- */
   const [addCustOpen,    setAddCustOpen]    = useState(false);
@@ -162,6 +178,20 @@ export default function App() {
     collectionInterval: '300',
   });
 
+  const logout = () => {
+
+  localStorage.removeItem(
+    'fleetsync_token'
+  );
+
+  localStorage.removeItem(
+    'fleetsync_user'
+  );
+
+  setUser(null);
+
+  };
+
   /* ---- derived data ---- */
   //const custData       = customers.find(c => c.id === currentCust) || customers[0];
   const filteredDev    = devices.filter(d =>
@@ -178,14 +208,42 @@ export default function App() {
   /* ---- fetch from API (non-blocking – seeds stay if API down) ---- */
   const refreshData = useCallback(async () => {
     setLoading(true);
-    const [devRes, alertRes] = await Promise.all([
-      apiFetch(`/devices?customerId=${currentCust}`),
-      apiFetch(`/alerts?customerId=${currentCust}&acknowledged=false`),
+  const [devRes, alertRes] = await Promise.all([
+  apiFetch('/devices/list'),
+  apiFetch(`/alerts?customerId=${currentCust}&acknowledged=false`),
     ]);
-    if (devRes && devRes.length > 0)   setDevices(devRes);
-    if (alertRes && alertRes.length > 0) setAlerts(alertRes);
-    setLoading(false);
-  }, [currentCust]);
+    if (devRes && devRes.length > 0)   setDevices(
+  devRes.map(d => ({
+    id: d.deviceId,
+    name: d.hostname || d.ipAddress,
+    model: d.model || 'Unknown',
+    ip: d.ipAddress,
+    location: 'Network Discovery',
+    serial: '',
+    community: '',
+    status: d.status?.toLowerCase() || 'online',
+
+    pageCount: 0,
+    bwPages: 0,
+    colorPages: 0,
+
+    tonerK: 0,
+    tonerC: 0,
+    tonerM: 0,
+    tonerY: 0,
+
+    drumK: 0,
+    drumC: 0,
+    drumM: 0,
+    drumY: 0,
+
+    fuser: 0,
+    temp: 0,
+    errors: [],
+
+    lastUpdate: d.lastSeen
+  }))
+);
 
   useEffect(() => {
     refreshData();
@@ -1088,6 +1146,16 @@ if __name__ == "__main__":
     { id: 'download',     icon: '📥', label: 'Download EXE' },
   ];
 
+  if (!user) {
+
+  return (
+    <LoginScreen
+      onLogin={setUser}
+    />
+  );
+
+  }
+  
   return (
     <div className={`app ${sidebarOpen ? '' : 'sidebar-closed'}`}>
       {/* ---- SIDEBAR ---- */}
@@ -1140,7 +1208,7 @@ if __name__ == "__main__":
           </button>
           <button className="hdr-btn" title="Download Installer" onClick={() => setView('download')}>📥</button>
           <button className="hdr-btn" title="Add Customer"       onClick={() => setAddCustOpen(true)}>➕</button>
-          <button className="avatar-btn" title="Admin">A</button>
+          <button className="avatar-btn" title="Logout"          onClick={logout} >{user.email[0].toUpperCase()}</button>
         </div>
       </header>
 

@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -9,9 +10,17 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error('FATAL ERROR: JWT_SECRET is not defined');
+  process.exit(1);
+}
 const dbPath = path.join(__dirname, 'fleetsync.db');
 const downloadPath = path.join(__dirname, 'downloads');
 let db;
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 // Middleware
 app.use(cors({
@@ -63,6 +72,34 @@ function createTables() {
           config JSON,
           createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
           updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // Users table
+        db.run(`
+       CREATE TABLE IF NOT EXISTS users (
+          userId TEXT PRIMARY KEY,
+          email TEXT UNIQUE NOT NULL,
+          passwordHash TEXT NOT NULL,
+          role TEXT NOT NULL,
+          customerId TEXT,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+        db.run(`
+      CREATE TABLE IF NOT EXISTS xerox_models (
+      modelId TEXT PRIMARY KEY,
+      modelName TEXT NOT NULL,
+      family TEXT,
+      supportsColor INTEGER,
+      supportsScan INTEGER,
+      supportsFax INTEGER,
+      meterOid TEXT,
+      tonerOidBlack TEXT,
+      tonerOidCyan TEXT,
+      tonerOidMagenta TEXT,
+      tonerOidYellow TEXT
         );
       `);
 
@@ -178,34 +215,536 @@ function createTables() {
         CREATE INDEX IF NOT EXISTS idx_service_customer ON service_history(customerId);
       `);
 
-      // Installer packages table
-      db.run(`
-        CREATE TABLE IF NOT EXISTS installer_packages (
-          packageId TEXT PRIMARY KEY,
-          customerId TEXT NOT NULL,
-          packageName TEXT NOT NULL,
-          fileName TEXT NOT NULL,
-          apiKey TEXT NOT NULL,
-          apiUrl TEXT NOT NULL,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-          expiresAt DATETIME,
-          downloadCount INTEGER DEFAULT 0,
-          lastDownloadedAt DATETIME,
-          FOREIGN KEY (customerId) REFERENCES customers(customerId)
-        );
-        CREATE INDEX IF NOT EXISTS idx_packages_customer ON installer_packages(customerId);
-      `, (err) => {
-        if (err) {
-          console.error('[ERROR] Creating tables:', err);
-          reject(err);
-        } else {
-          console.log('[✓] Database tables initialized');
-          resolve();
-        }
-      });
+
+// Fleet Devices table
+db.run(`
+  CREATE TABLE IF NOT EXISTS fleet_devices (
+    deviceId TEXT PRIMARY KEY,
+    customerId TEXT,
+    collectorId TEXT,
+    hostname TEXT,
+    ipAddress TEXT,
+    manufacturer TEXT,
+    model TEXT,
+    status TEXT,
+    lastSeen DATETIME
+  );
+`);
+
+// Installer packages table
+db.run(`
+  CREATE TABLE IF NOT EXISTS installer_packages (
+    packageId TEXT PRIMARY KEY,
+    customerId TEXT NOT NULL,
+    packageName TEXT NOT NULL,
+    fileName TEXT NOT NULL,
+    apiKey TEXT NOT NULL,
+    apiUrl TEXT NOT NULL,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expiresAt DATETIME,
+    downloadCount INTEGER DEFAULT 0,
+    lastDownloadedAt DATETIME,
+    FOREIGN KEY (customerId) REFERENCES customers(customerId)
+  );
+  CREATE INDEX IF NOT EXISTS idx_packages_customer ON installer_packages(customerId);
+`, (err) => {
+
+  if (err) {
+    console.error('[ERROR] Creating tables:', err);
+    reject(err);
+  } else {
+    console.log('[✓] Database tables initialized');
+    resolve();
+  }
+
+});
+
     });
   });
 }
+
+function seedXeroxModels() {
+
+  const models = [
+    ['xm001','VersaLink B405','VersaLink',0,1,1],
+    ['xm002','VersaLink C405','VersaLink',1,1,1],
+    ['xm003','VersaLink B415','VersaLink',0,1,1],
+    ['xm004','VersaLink C415','VersaLink',1,1,1],
+    ['xm005','VersaLink B7025','VersaLink',0,1,1],
+    ['xm006','VersaLink C7025','VersaLink',1,1,1],
+    ['xm007','VersaLink B7135','VersaLink',0,1,1],
+    ['xm008','VersaLink C7135','VersaLink',1,1,1],
+    ['xm009','AltaLink C8255','AltaLink',1,1,1]
+  ];
+
+  models.forEach(model => {
+
+    db.run(
+      `
+      INSERT OR IGNORE INTO xerox_models
+      (
+        modelId,
+        modelName,
+        family,
+        supportsColor,
+        supportsScan,
+        supportsFax
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      model
+    );
+
+  });
+
+}
+
+// ========== JWT AUTHENTICATION ==========
+
+function authenticateToken(req, res, next) {
+
+  const authHeader =
+    req.headers['authorization'];
+
+  const token =
+    authHeader &&
+    authHeader.split(' ')[1];
+
+  if (!token) {
+
+    return res.status(401).json({
+      error: 'Access denied'
+    });
+
+  }
+
+  jwt.verify(
+    token,
+    JWT_SECRET,
+    (err, user) => {
+
+      if (err) {
+
+        return res.status(403).json({
+          error: 'Invalid token'
+        });
+
+      }
+
+      req.user = user;
+
+      next();
+
+    }
+  );
+
+}
+
+// ========== AUTH ROUTES ==========
+
+// Register User
+app.post('/api/auth/register', async (req, res) => {
+
+  try {
+
+    const {
+      email,
+      password,
+      role,
+      customerId
+    } = req.body;
+
+    if (!email || !password) {
+
+      return res.status(400).json({
+        error: 'Email and password required'
+      });
+
+    }
+
+    db.get(
+      'SELECT * FROM users WHERE email = ?',
+      [email],
+      async (err, existingUser) => {
+
+        if (err) {
+
+          console.error(err);
+
+          return res.status(500).json({
+            error: 'Database error'
+          });
+
+        }
+
+        if (existingUser) {
+
+          return res.status(400).json({
+            error: 'User already exists'
+          });
+
+        }
+
+        const passwordHash =
+          await bcrypt.hash(password, 10);
+
+        const userId =
+          uuidv4();
+
+        db.run(
+          `
+          INSERT INTO users
+          (
+            userId,
+            email,
+            passwordHash,
+            role,
+            customerId
+          )
+          VALUES (?, ?, ?, ?, ?)
+          `,
+          [
+            userId,
+            email,
+            passwordHash,
+            role || 'customer_admin',
+            customerId || null
+          ],
+          function(insertErr) {
+
+            if (insertErr) {
+
+              console.error(insertErr);
+
+              return res.status(500).json({
+                error: 'Failed to create user'
+              });
+
+            }
+
+            res.status(201).json({
+              success: true,
+              userId
+            });
+
+          }
+        );
+
+      }
+    );
+
+  } catch (err) {
+
+    console.error(err);
+
+    res.status(500).json({
+      error: 'Server error'
+    });
+
+  }
+
+});
+
+// Login User
+app.post('/api/auth/login', async (req, res) => {
+
+  try {
+
+    const {
+      email,
+      password
+    } = req.body;
+
+    db.get(
+      'SELECT * FROM users WHERE email = ?',
+      [email],
+      async (err, user) => {
+
+        if (err) {
+
+          console.error(err);
+
+          return res.status(500).json({
+            error: 'Database error'
+          });
+
+        }
+
+        if (!user) {
+
+          return res.status(401).json({
+            error: 'Invalid credentials'
+          });
+
+        }
+
+        const validPassword =
+          await bcrypt.compare(
+            password,
+            user.passwordHash
+          );
+
+        if (!validPassword) {
+
+          return res.status(401).json({
+            error: 'Invalid credentials'
+          });
+
+        }
+
+        const token =
+          jwt.sign(
+            {
+              userId: user.userId,
+              email: user.email,
+              role: user.role,
+              customerId: user.customerId
+            },
+            JWT_SECRET,
+            {
+              expiresIn: '7d'
+            }
+          );
+
+        res.json({
+          success: true,
+          token,
+          user: {
+            userId: user.userId,
+            email: user.email,
+            role: user.role,
+            customerId: user.customerId
+          }
+        });
+
+      }
+    );
+
+  } catch (err) {
+
+    console.error(err);
+
+    res.status(500).json({
+      error: 'Server error'
+    });
+
+  }
+
+});
+
+// Current User
+app.get(
+  '/api/auth/me',
+  authenticateToken,
+  (req, res) => {
+
+    res.json({
+      success: true,
+      user: req.user
+    });
+
+  }
+);
+
+// ========== COLLECTOR HEARTBEAT ==========
+
+app.post('/api/collector/heartbeat', (req, res) => {
+
+  try {
+
+    const {
+      customerId,
+      collectorId,
+      machineName,
+      timestamp
+    } = req.body;
+
+    console.log(
+      `[HEARTBEAT] Customer=${customerId} Collector=${collectorId} Machine=${machineName}`
+    );
+
+    res.json({
+      success: true,
+      message: 'Heartbeat received',
+      serverTime: new Date().toISOString()
+    });
+
+  } catch (err) {
+
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+
+  }
+
+});
+
+// ========== DEVICE REGISTRATION ==========
+
+app.post('/api/devices/register', (req, res) => {
+
+    try {
+
+        const {
+            customerId,
+            collectorId,
+            hostname,
+            ipAddress,
+            manufacturer,
+            model
+        } = req.body;
+
+        db.get(
+            `
+            SELECT deviceId
+            FROM fleet_devices
+            WHERE ipAddress = ?
+            `,
+            [ipAddress],
+            (err, existing) => {
+
+                if (err) {
+                    console.error(err);
+
+                    return res.status(500).json({
+                        success: false
+                    });
+                }
+
+                // Update existing device
+                if (existing) {
+
+                    db.run(
+                        `
+                        UPDATE fleet_devices
+                        SET
+                            hostname = ?,
+                            manufacturer = ?,
+                            model = ?,
+                            status = 'Online',
+                            lastSeen = ?
+                        WHERE ipAddress = ?
+                        `,
+                        [
+                            hostname,
+                            manufacturer || 'Unknown',
+                            model || 'Unknown',
+                            new Date().toISOString(),
+                            ipAddress
+                        ],
+                        (err) => {
+
+                            if (err) {
+                                console.error(err);
+
+                                return res.status(500).json({
+                                    success: false
+                                });
+                            }
+
+                            res.json({
+                                success: true,
+                                action: 'updated'
+                            });
+
+                        }
+                    );
+
+                } else {
+
+                    // Create new device
+                    const deviceId = uuidv4();
+
+                    db.run(
+                        `
+                        INSERT INTO fleet_devices
+                        (
+                            deviceId,
+                            customerId,
+                            collectorId,
+                            hostname,
+                            ipAddress,
+                            manufacturer,
+                            model,
+                            status,
+                            lastSeen
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        `,
+                        [
+                            deviceId,
+                            customerId,
+                            collectorId,
+                            hostname,
+                            ipAddress,
+                            manufacturer || 'Unknown',
+                            model || 'Unknown',
+                            'Online',
+                            new Date().toISOString()
+                        ],
+                        (err) => {
+
+                            if (err) {
+                                console.error(err);
+
+                                return res.status(500).json({
+                                    success: false
+                                });
+                            }
+
+                            res.json({
+                                success: true,
+                                action: 'created'
+                            });
+
+                        }
+                    );
+
+                }
+
+            }
+        );
+
+    } catch (ex) {
+
+        console.error(ex);
+
+        res.status(500).json({
+            success: false
+        });
+
+    }
+
+});
+
+app.get('/api/devices/list', (req, res) => {
+
+    db.all(
+        `
+        SELECT *
+        FROM fleet_devices
+        ORDER BY hostname
+        `,
+        [],
+        (err, rows) => {
+
+            if (err) {
+                console.error(err);
+
+                return res.status(500).json({
+                    success: false
+                });
+            }
+
+            res.json(rows);
+
+        }
+    );
+
+});
 
 // ========== CUSTOMER MANAGEMENT ==========
 
@@ -465,6 +1004,29 @@ app.put('/api/devices/:deviceId', (req, res) => {
     });
 
   }
+
+});
+
+app.get('/api/xerox/models', (req, res) => {
+
+    db.all(
+        `
+        SELECT *
+        FROM xerox_models
+        ORDER BY modelName
+        `,
+        [],
+        (err, rows) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success:false
+                });
+            }
+
+            res.json(rows);
+
+        });
 
 });
 
