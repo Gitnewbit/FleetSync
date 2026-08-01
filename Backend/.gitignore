@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# React build (Render builds this fresh each deploy)
+client/build/
+
+# Environment — NEVER commit secrets
+.env
+.env.local
+.env.production.local
+
+# Database
+*.db
+*.db-journal
+
+# Logs
+*.log
+logs/
+
+# Collector build artifacts
+collector/__pycache__/
+collector/*.pyc
+collector/dist/
+collector/build/
+collector/build_tmp/
+collector/*.spec
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

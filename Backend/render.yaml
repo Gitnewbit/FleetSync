@@ -1,0 +1,39 @@
+# Render.com deployment — push this repo to GitHub then click "New Web Service"
+# Docs: https://render.com/docs/infrastructure-as-code
+
+services:
+  - type: web
+    name: fleetsync-pro
+    env: node
+    region: oregon
+    plan: starter
+
+    # Build: install server deps, install client deps, build React
+    buildCommand: "npm install && cd client && npm install --legacy-peer-deps && npm run build && cd .." 
+
+    # Start: production mode — Express serves the React build
+    startCommand: node server.js
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: admin@fleetsync.pro
+      - key: ADMIN_PASSWORD
+        value: FleetSync2024!
+      - key: CORS_ORIGIN
+        value: ""
+      - key: DATABASE_PATH
+        value: /var/data/fleetsync.db
+
+    # Persistent disk — keeps SQLite database across deploys
+    disk:
+      name: fleetsync-db
+      mountPath: /var/data
+      sizeGB: 1

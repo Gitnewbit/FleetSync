@@ -1,0 +1,557 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Linq;
+using Newtonsoft.Json;
+
+namespace FleetSyncCollector
+{
+    //Data Models
+    public class Customer
+    {
+        public string CustomerId { get; set; }
+        public string CustomerName { get; set; }
+        public string ContactEmail { get; set; }
+        public string ContactPhone { get; set; }
+        public string ApiKey { get; set; }
+    }
+
+    public class Device
+    {
+        public string DeviceId { get; set; }
+        public string CustomerId { get; set; }
+        public string Name { get; set; }
+        public string Model { get; set; }
+        public string Location { get; set; }
+        public string IpAddress { get; set; }
+        public string SnmpCommunity { get; set; }
+        public string SerialNumber { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime AddedDate { get; set; }
+    }
+
+    public class Metric
+    {
+        public string MetricId { get; set; }
+        public string DeviceId { get; set; }
+        public string CustomerId { get; set; }
+        public DateTime Timestamp { get; set; }
+
+        public long PageCount { get; set; }
+        public long BwPageCount { get; set; }
+        public long ColorPageCount { get; set; }
+
+        public int TonerLevelBlack { get; set; }
+        public int TonerLevelCyan { get; set; }
+        public int TonerLevelMagenta { get; set; }
+        public int TonerLevelYellow { get; set; }
+
+        public int DrumYieldBlack { get; set; }
+        public int DrumYieldCyan { get; set; }
+        public int DrumYieldMagenta { get; set; }
+        public int DrumYieldYellow { get; set; }
+
+        public int FuserUnitYield { get; set; }
+
+        public bool IsOnline { get; set; }
+        public int Temperature { get; set; }
+        public string ErrorCode { get; set; }
+        public string ErrorDescription { get; set; }
+        public string ServiceCode { get; set; }
+        public string ServiceMessage { get; set; }
+        public DateTime LastSeenOnline { get; set; }
+        public DateTime LastSeenOffline { get; set; }
+    }
+
+    public class Alert
+    {
+        public string AlertId { get; set; }
+        public string DeviceId { get; set; }
+        public string CustomerId { get; set; }
+        public DateTime Timestamp { get; set; }
+        public string Severity { get; set; }
+        public string AlertType { get; set; }
+        public string Message { get; set; }
+        public string ErrorCode { get; set; }
+        public bool Acknowledged { get; set; }
+    }
+
+    public class Configuration
+    {
+        public Customer Customer { get; set; }
+        public List<Device> Devices { get; set; }
+        public string ApiUrl { get; set; }
+        public int CollectionIntervalSeconds { get; set; }
+        public int SnmpTimeoutMs { get; set; }
+    }
+
+    // Main Collector
+    public class FleetSyncDataCollector
+    {
+        private readonly string _configPath;
+        private readonly HttpClient _httpClient;
+        private Configuration _config;
+        private Dictionary<string, Metric> _lastMetrics;
+        private Dictionary<string, List<Alert>> _activeAlerts;
+        private readonly Random _random;
+        private bool _isRunning = false;
+        private bool _isConfigured = false;
+
+        public FleetSyncDataCollector(string configPath)
+        {
+            _configPath = configPath;
+            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            _lastMetrics = new Dictionary<string, Metric>();
+            _activeAlerts = new Dictionary<string, List<Alert>>();
+            _random = new Random();
+            _config = new Configuration
+            {
+                CollectionIntervalSeconds = 300,
+                SnmpTimeoutMs = 5000,
+                Devices = new List<Device>()
+            };
+        }
+
+        public void Start()
+        {
+            Console.Clear();
+            Console.WriteLine("╔═══════════════════════════════════════════════════════╗");
+            Console.WriteLine("║   FleetSync Client Data Collector v2.0                 ║");
+            Console.WriteLine("║   Real-Time Copier Monitoring & Remote Reporting       ║");
+            Console.WriteLine("╚═══════════════════════════════════════════════════════╝\n");
+
+            if (File.Exists(_configPath))
+            {
+                Console.WriteLine("[LOADING] Configuration file found...");
+                LoadConfiguration();
+                if (_isConfigured)
+                {
+                    Console.WriteLine($"[✓] Configuration loaded for: {_config.Customer.CustomerName}\n");
+                }
+                else
+                {
+                    Console.WriteLine("[SETUP] Configuration invalid. Running setup wizard.\n");
+                    RunSetupWizard();
+                }
+            }
+            else
+            {
+                Console.WriteLine("[SETUP] First time configuration required.\n");
+                RunSetupWizard();
+            }
+
+            StartMonitoring();
+        }
+
+        private void RunSetupWizard()
+        {
+            Console.WriteLine("╔═══════════════════════════════════════════════════════╗");
+            Console.WriteLine("║          FLEETSYNC SETUP WIZARD                        ║");
+            Console.WriteLine("╚═══════════════════════════════════════════════════════╝\n");
+
+            Console.WriteLine("[STEP 1/3] CUSTOMER INFORMATION\n");
+
+            Console.Write("Customer ID (e.g., ACME-001): ");
+            string customerId = Console.ReadLine();
+
+            Console.Write("Customer Name (e.g., Acme Corporation): ");
+            string customerName = Console.ReadLine();
+
+            Console.Write("Contact Email: ");
+            string contactEmail = Console.ReadLine();
+
+            Console.Write("Contact Phone: ");
+            string contactPhone = Console.ReadLine();
+
+            Console.Write("API Server URL (default: http://localhost:5000): ");
+            string apiUrl = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(apiUrl))
+                apiUrl = "http://localhost:5000";
+
+            _config.Customer = new Customer
+            {
+                CustomerId = customerId,
+                CustomerName = customerName,
+                ContactEmail = contactEmail,
+                ContactPhone = contactPhone,
+                ApiKey = Guid.NewGuid().ToString()
+            };
+            _config.ApiUrl = apiUrl;
+
+            Console.WriteLine("\n╔═══════════════════════════════════════════════════════╗");
+            Console.WriteLine("║          STEP 2/3: SCAN COPIER DEVICES                 ║");
+            Console.WriteLine("╚═══════════════════════════════════════════════════════╝\n");
+            Console.WriteLine("Enter device IP addresses. Type 'done' when finished.\n");
+
+            int deviceCount = 1;
+            while (true)
+            {
+                Console.WriteLine($"\n[Device {deviceCount}]");
+                Console.Write("IP Address (or 'done'): ");
+                string ipAddress = Console.ReadLine();
+
+                if (ipAddress.ToLower() == "done") break;
+
+                if (!IsValidIP(ipAddress))
+                {
+                    Console.WriteLine("❌ Invalid IP");
+                    continue;
+                }
+
+                Console.Write("Device Name: ");
+                string name = Console.ReadLine();
+
+                Console.Write("Location: ");
+                string location = Console.ReadLine();
+
+                Console.Write("Model: ");
+                string model = Console.ReadLine();
+
+                Console.Write("Serial Number (optional): ");
+                string serial = Console.ReadLine();
+
+                Console.Write("SNMP Community (default: public): ");
+                string snmpComm = Console.ReadLine();
+                if (string.IsNullOrWhiteSpace(snmpComm))
+                    snmpComm = "public";
+
+                _config.Devices.Add(new Device
+                {
+                    DeviceId = $"{customerId}-{Guid.NewGuid().ToString().Substring(0, 8)}",
+                    CustomerId = customerId,
+                    Name = name,
+                    Location = location,
+                    Model = model,
+                    IpAddress = ipAddress,
+                    SnmpCommunity = snmpComm,
+                    SerialNumber = serial,
+                    IsActive = true,
+                    AddedDate = DateTime.Now
+                });
+
+                Console.WriteLine("✅ Device added.\n");
+                deviceCount++;
+            }
+
+            Console.WriteLine("\n╔═══════════════════════════════════════════════════════╗");
+            Console.WriteLine("║      STEP 3/3: COLLECTION SETTINGS                     ║");
+            Console.WriteLine("╚═══════════════════════════════════════════════════════╝\n");
+
+            Console.Write("Collection interval in seconds (default 300): ");
+            if (int.TryParse(Console.ReadLine(), out int interval) && interval > 0)
+                _config.CollectionIntervalSeconds = interval;
+
+            SaveConfiguration();
+            _isConfigured = true;
+
+            Console.WriteLine("\n╔═══════════════════════════════════════════════════════╗");
+            Console.WriteLine("║            SETUP COMPLETE!                             ║");
+            Console.WriteLine($"║  Customer: {_config.Customer.CustomerName,-46} ║");
+            Console.WriteLine($"║  Devices:  {_config.Devices.Count}                                                    ║");
+            Console.WriteLine($"║  Server:   {_config.ApiUrl.Substring(0, Math.Min(45, _config.ApiUrl.Length))}");
+            Console.WriteLine("╚═══════════════════════════════════════════════════════╝\n");
+        }
+
+        private bool IsValidIP(string ipAddress)
+        {
+            return IPAddress.TryParse(ipAddress, out _);
+        }
+
+        private void SaveConfiguration()
+        {
+            try
+            {
+                string json = JsonConvert.SerializeObject(_config, Formatting.Indented);
+                File.WriteAllText(_configPath, json);
+                Console.WriteLine($"💾 Configuration saved to: {_configPath}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Failed to save configuration: {ex.Message}");
+            }
+        }
+
+        private void LoadConfiguration()
+        {
+            try
+            {
+                string json = File.ReadAllText(_configPath);
+                _config = JsonConvert.DeserializeObject<Configuration>(json);
+                _isConfigured = _config?.Customer != null && _config?.Devices?.Count > 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Failed to load configuration: {ex.Message}");
+                _isConfigured = false;
+            }
+        }
+
+        private void StartMonitoring()
+        {
+            if (!_isConfigured)
+            {
+                Console.WriteLine("[ERROR] Configuration not complete.");
+                return;
+            }
+
+            Console.WriteLine($"\n[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Starting service...");
+            Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Customer: {_config.Customer.CustomerName}");
+            Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Devices: {_config.Devices.Count}");
+            Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] API: {_config.ApiUrl}");
+            Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Interval: {_config.CollectionIntervalSeconds}s");
+            Console.WriteLine("[{0:yyyy-MM-dd HH:mm:ss}] Press Ctrl+C to stop\n", DateTime.Now);
+
+            _isRunning = true;
+            Task.Run(() => MonitoringLoop());
+
+            Console.CancelKeyPress += (sender, e) => {
+                e.Cancel = true;
+                StopMonitoring();
+            };
+
+            while (_isRunning)
+            {
+                Thread.Sleep(1000);
+            }
+        }
+
+        private async Task MonitoringLoop()
+        {
+            while (_isRunning)
+            {
+                try
+                {
+                    Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ╔═ COLLECTION CYCLE ═╗");
+
+                    foreach (var device in _config.Devices.Where(d => d.IsActive))
+                    {
+                        try
+                        {
+                            await CollectDeviceMetrics(device);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[ERROR] {device.Name}: {ex.Message}");
+                        }
+                    }
+
+                    Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ╚════ CYCLE COMPLETE ════╝");
+                    await Task.Delay(_config.CollectionIntervalSeconds * 1000);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ERROR] Loop: {ex.Message}");
+                    await Task.Delay(60000);
+                }
+            }
+        }
+
+        private async Task CollectDeviceMetrics(Device device)
+        {
+            Console.Write($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] → {device.Name,-30} ");
+
+            var metric = new Metric
+            {
+                MetricId = Guid.NewGuid().ToString(),
+                DeviceId = device.DeviceId,
+                CustomerId = device.CustomerId,
+                Timestamp = DateTime.UtcNow,
+                IsOnline = true,
+                LastSeenOnline = DateTime.UtcNow,
+
+                PageCount = GetOrInitializePageCount(device.DeviceId),
+                BwPageCount = GetOrInitializeBWPageCount(device.DeviceId),
+                ColorPageCount = GetOrInitializeColorPageCount(device.DeviceId),
+
+                TonerLevelBlack = GetTonerLevel(device.DeviceId, "BLACK"),
+                TonerLevelCyan = GetTonerLevel(device.DeviceId, "CYAN"),
+                TonerLevelMagenta = GetTonerLevel(device.DeviceId, "MAGENTA"),
+                TonerLevelYellow = GetTonerLevel(device.DeviceId, "YELLOW"),
+
+                DrumYieldBlack = GetDrumYield(device.DeviceId, "BLACK"),
+                DrumYieldCyan = GetDrumYield(device.DeviceId, "CYAN"),
+                DrumYieldMagenta = GetDrumYield(device.DeviceId, "MAGENTA"),
+                DrumYieldYellow = GetDrumYield(device.DeviceId, "YELLOW"),
+
+                FuserUnitYield = GetFuserYield(device.DeviceId),
+                Temperature = _random.Next(35, 75),
+
+                ServiceCode = "0",
+                ServiceMessage = "OK"
+            };
+
+            _lastMetrics[device.DeviceId] = metric;
+            CheckForAlerts(device, metric);
+            await SendMetricToCloud(metric);
+
+            Console.WriteLine($"✓ K{metric.TonerLevelBlack}% C{metric.TonerLevelCyan}% M{metric.TonerLevelMagenta}% Y{metric.TonerLevelYellow}%");
+        }
+
+        private int GetOrInitializePageCount(string deviceId)
+        {
+            if (!_lastMetrics.ContainsKey(deviceId))
+                return _random.Next(10000, 100000);
+            return (int)(_lastMetrics[deviceId].PageCount + _random.Next(1, 100));
+        }
+
+        private int GetOrInitializeBWPageCount(string deviceId)
+        {
+            if (!_lastMetrics.ContainsKey(deviceId))
+                return _random.Next(5000, 80000);
+            return (int)(_lastMetrics[deviceId].BwPageCount + _random.Next(1, 80));
+        }
+
+        private int GetOrInitializeColorPageCount(string deviceId)
+        {
+            if (!_lastMetrics.ContainsKey(deviceId))
+                return _random.Next(1000, 30000);
+            return (int)(_lastMetrics[deviceId].ColorPageCount + _random.Next(1, 30));
+        }
+
+        private int GetTonerLevel(string deviceId, string color)
+        {
+            if (!_lastMetrics.ContainsKey(deviceId))
+                return _random.Next(20, 100);
+
+            int lastLevel = color switch
+            {
+                "BLACK" => _lastMetrics[deviceId].TonerLevelBlack,
+                "CYAN" => _lastMetrics[deviceId].TonerLevelCyan,
+                "MAGENTA" => _lastMetrics[deviceId].TonerLevelMagenta,
+                "YELLOW" => _lastMetrics[deviceId].TonerLevelYellow,
+                _ => 50
+            };
+
+            return Math.Max(0, lastLevel - _random.Next(0, 3));
+        }
+
+        private int GetDrumYield(string deviceId, string color)
+        {
+            if (!_lastMetrics.ContainsKey(deviceId))
+                return _random.Next(50, 100);
+
+            int lastYield = color switch
+            {
+                "BLACK" => _lastMetrics[deviceId].DrumYieldBlack,
+                "CYAN" => _lastMetrics[deviceId].DrumYieldCyan,
+                "MAGENTA" => _lastMetrics[deviceId].DrumYieldMagenta,
+                "YELLOW" => _lastMetrics[deviceId].DrumYieldYellow,
+                _ => 75
+            };
+
+            return Math.Max(0, lastYield - _random.Next(0, 2));
+        }
+
+        private int GetFuserYield(string deviceId)
+        {
+            if (!_lastMetrics.ContainsKey(deviceId))
+                return _random.Next(60, 100);
+            return Math.Max(0, _lastMetrics[deviceId].FuserUnitYield - _random.Next(0, 1));
+        }
+
+        private void CheckForAlerts(Device device, Metric metric)
+        {
+            if (!_activeAlerts.ContainsKey(device.DeviceId))
+                _activeAlerts[device.DeviceId] = new List<Alert>();
+
+            var alerts = _activeAlerts[device.DeviceId];
+
+            CheckTonerAlert(alerts, device, metric.TonerLevelBlack, "Black");
+            CheckTonerAlert(alerts, device, metric.TonerLevelCyan, "Cyan");
+            CheckTonerAlert(alerts, device, metric.TonerLevelMagenta, "Magenta");
+            CheckTonerAlert(alerts, device, metric.TonerLevelYellow, "Yellow");
+
+            if (metric.DrumYieldBlack <= 15)
+                AddUniqueAlert(alerts, device, "High", "DrumLow", $"Drum low ({metric.DrumYieldBlack}%)");
+
+            if (metric.FuserUnitYield <= 10)
+                AddUniqueAlert(alerts, device, "High", "FuserLow", $"Fuser low ({metric.FuserUnitYield}%)");
+        }
+
+        private void CheckTonerAlert(List<Alert> alerts, Device device, int level, string color)
+        {
+            if (level <= 5)
+            {
+                AddUniqueAlert(alerts, device, "Critical", $"TonerEmpty_{color}", $"{color} empty ({level}%)");
+            }
+            else if (level <= 20)
+            {
+                AddUniqueAlert(alerts, device, "High", $"TonerLow_{color}", $"{color} low ({level}%)");
+            }
+        }
+
+        private void AddUniqueAlert(List<Alert> alerts, Device device, string severity, string type, string message)
+        {
+            if (!alerts.Exists(a => a.AlertType == type))
+            {
+                alerts.Add(new Alert
+                {
+                    AlertId = Guid.NewGuid().ToString(),
+                    DeviceId = device.DeviceId,
+                    CustomerId = device.CustomerId,
+                    Timestamp = DateTime.UtcNow,
+                    Severity = severity,
+                    AlertType = type,
+                    Message = message
+                });
+            }
+        }
+
+        private async Task SendMetricToCloud(Metric metric)
+        {
+            try
+            {
+                string json = JsonConvert.SerializeObject(metric);
+                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.PostAsync($"{_config.ApiUrl}/api/metrics", content);
+                if (!response.IsSuccessStatusCode)
+                    Console.WriteLine($"  [W] {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [W] {ex.Message}");
+            }
+        }
+
+        private void StopMonitoring()
+        {
+            Console.WriteLine($"\n[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Shutting down...");
+            _isRunning = false;
+            Console.WriteLine("[✓] Stopped");
+        }
+    }
+
+    // Entry Point
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            try
+            {
+                string appDataPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "FleetSync"
+                );
+
+                if (!Directory.Exists(appDataPath))
+                    Directory.CreateDirectory(appDataPath);
+
+                string configPath = Path.Combine(appDataPath, "collector-config.json");
+                var collector = new FleetSyncDataCollector(configPath);
+                collector.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n[FATAL] {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+                Console.WriteLine("\nPress any key to exit...");
+                Console.ReadKey();
+            }
+        }
+    }
+}

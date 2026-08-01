@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy this file to fleetsync_config.json and fill in your values.",
+  "apiUrl":          "https://YOUR-PUBLIC-IP-OR-DOMAIN:5000",
+  "customerId":      "CUST-001",
+  "apiKey":          "PASTE-API-KEY-FROM-FLEETSYNC-DASHBOARD",
+  "collectorId":     "collector-abc12345",
+  "intervalSeconds": 60,
+  "devices": [
+    {
+      "deviceId":     "dev-192-168-1-50",
+      "ip":           "192.168.1.50",
+      "name":         "Reception Copier",
+      "community":    "public",
+      "location":     "Reception",
+      "model":        "Xerox VersaLink C7030",
+      "serialNumber": ""
+    },
+    {
+      "deviceId":     "dev-192-168-1-51",
+      "ip":           "192.168.1.51",
+      "name":         "Finance Dept MFP",
+      "community":    "public",
+      "location":     "Floor 2",
+      "model":        "Canon imageRUNNER 2745",
+      "serialNumber": ""
+    }
+  ]
+}

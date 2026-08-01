@@ -1,160 +1,108 @@
 import React, { useState } from 'react';
 
-const API =
-  process.env.REACT_APP_API_URL ||
-  'http://localhost:5000/api';
+const API = 'http://localhost:5000/api';
 
+/* ============================================================
+   IT MANAGER LOGIN — single-account, no registration
+   API: POST /api/auth/login  { email, password }
+        → { success, token, user }
+   ============================================================ */
 export default function LoginScreen({ onLogin }) {
-
-  const [email, setEmail] = useState('');
+  const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState('');
 
-  const handleLogin = async (e) => {
-
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
-    setLoading(true);
     setError('');
 
-    try {
-
-      const res = await fetch(
-        `${API}/auth/login`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            email,
-            password
-          })
-        }
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-
-        setError(
-          data.error || 'Login failed'
-        );
-
-        setLoading(false);
-        return;
-
-      }
-
-      localStorage.setItem(
-        'fleetsync_token',
-        data.token
-      );
-
-      localStorage.setItem(
-        'fleetsync_user',
-        JSON.stringify(data.user)
-      );
-
-      onLogin(data.user);
-
-    } catch {
-
-      setError(
-        'Unable to connect to server'
-      );
-
+    if (!email || !password) {
+      setError('Email and password are required.');
+      return;
     }
 
-    setLoading(false);
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/auth/login`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, password }),
+      });
+      const data = await r.json().catch(() => null);
 
+      if (!r.ok || !data?.success) {
+        setError((data?.error) || 'Invalid email or password.');
+        return;
+      }
+
+      localStorage.setItem('fleetsync_token', data.token);
+      localStorage.setItem('fleetsync_user',  JSON.stringify(data.user));
+      onLogin(data.user);
+
+    } catch (err) {
+      console.error('LOGIN ERROR', err);
+      setError('Cannot reach the API server. Is it running?');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div
-      style={{
-        height: '100vh',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: '#0f172a'
-      }}
-    >
+    <div className="login-screen">
+      <div className="login-glow" />
 
-      <form
-        onSubmit={handleLogin}
-        style={{
-          width: 400,
-          padding: 30,
-          background: '#1e293b',
-          borderRadius: 12
-        }}
-      >
+      <div className="login-card">
+        {/* Brand */}
+        <div className="login-logo">
+          <span>📊</span> FleetSync Pro
+        </div>
+        <p className="login-subtitle">IT Manager Portal — Copier Fleet Monitoring</p>
 
-        <h1
-          style={{
-            color: '#fff',
-            textAlign: 'center'
-          }}
-        >
-          FleetSync Login
-        </h1>
+        {/* Error */}
+        {error && <div className="error-banner">⚠ {error}</div>}
 
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) =>
-            setEmail(e.target.value)
-          }
-          style={{
-            width: '100%',
-            padding: 12,
-            marginTop: 20
-          }}
-        />
+        {/* Login form */}
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label className="form-label">Email Address</label>
+            <input
+              className="form-input"
+              type="email"
+              autoFocus
+              placeholder="admin@fleetsync.pro"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              autoComplete="email"
+            />
+          </div>
 
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) =>
-            setPassword(e.target.value)
-          }
-          style={{
-            width: '100%',
-            padding: 12,
-            marginTop: 10
-          }}
-        />
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input
+              className="form-input"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
 
-        {error && (
-          <p
-            style={{
-              color: 'red'
-            }}
+          <button
+            type="submit"
+            className="btn btn-primary login-submit"
+            disabled={loading}
           >
-            {error}
-          </p>
-        )}
+            {loading ? 'Signing in…' : '→ Sign In'}
+          </button>
+        </form>
 
-        <button
-          type="submit"
-          style={{
-            width: '100%',
-            marginTop: 20,
-            padding: 12
-          }}
-        >
-          {loading
-            ? 'Signing In...'
-            : 'Login'}
-        </button>
-
-      </form>
-
+        <p className="login-footnote">
+          Default credentials are set via <code>ADMIN_EMAIL</code> and{' '}
+          <code>ADMIN_PASSWORD</code> in your <code>.env</code> file.
+        </p>
+      </div>
     </div>
   );
-
 }

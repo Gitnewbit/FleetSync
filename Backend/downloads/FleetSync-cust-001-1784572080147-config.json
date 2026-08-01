@@ -1,0 +1,9 @@
+{
+  "customerId": "cust-001",
+  "customerName": "cust-001",
+  "apiKey": "460ae14ff9b8e0e3847074c6ccd51c64e6d0d2524def69652826fae473301a30",
+  "apiUrl": "http://localhost:5000",
+  "collectionInterval": 60,
+  "packageId": "a1944de0-3cfe-4cdb-8870-407b0e652bc9",
+  "createdAt": "2026-07-20T18:28:00.147Z"
+}

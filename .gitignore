@@ -1,26 +1,36 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Dependencies
+node_modules/
+client/node_modules/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# React build (Render builds this fresh each deploy)
+client/build/
 
-# testing
-/coverage
-
-# production
-/build
-
-# misc
-.DS_Store
+# Environment — NEVER commit secrets
+.env
 .env.local
-.env.development.local
-.env.test.local
 .env.production.local
 
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Database
+*.db
+*.db-journal
 
-.vercel
-.env*
+# Logs
+*.log
+logs/
+
+# Collector build artifacts
+collector/__pycache__/
+collector/*.pyc
+collector/dist/
+collector/build/
+collector/build_tmp/
+collector/*.spec
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Collector EXE (built locally by client — not committed)
+collector/*.exe
