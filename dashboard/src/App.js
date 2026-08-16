@@ -397,41 +397,9 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-// --- config-driven vehicle polling ---
-  const cfg = useMemo(() => loadConfig(), []);
-  const apiUrl = cfg.apiUrl;
-  const interval = cfg.pollInterval;
-
-  useEffect(() => {
-    if (!apiUrl || !interval) return;
-
-    let cancelled = false;
-    const controller = new AbortController();
-
-    const fetchVehicles = async () => {
-      try {
-        const res = await fetch(`${apiUrl}/vehicles`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) setVehicles(Array.isArray(data) ? data : []);
-      } catch (err) {
-        if (err.name !== 'AbortError' && !cancelled) {
-          console.error('Vehicle poll failed:', err);
-        }
-      }
-    };
-
-    fetchVehicles();
-    const id = setInterval(fetchVehicles, interval);
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      clearInterval(id);
-    };
-  }, [apiUrl, interval]);
+  const downloadCollectorPy = () => {
+    if (!generatedPkg || !selCustInst) return;
+    const c = selCustInst;
     _triggerDownload(
 `#!/usr/bin/env python3
 """
@@ -547,7 +515,7 @@ def run_cycle(config):
     for dev in devices:
         try:
             data = collect_device(dev, config)
-            log.info(f"  {dev.get('name', dev.get('ip','?'))}  {'ONLINE' if data['isOnline'] else 'OFFLINE'}  K:{data['tonerLevelBlack']}% C:{data['tonerLevelCyan']}% M:{data['tonerLevelMagenta']}% Y:{data['tonerLevelYellow']}%")
+            log.info(f"  {dev.get('name', dev.get('ip','?'))}  {('ONLINE' if data['isOnline'] else 'OFFLINE')}  K:{data['tonerLevelBlack']}% C:{data['tonerLevelCyan']}% M:{data['tonerLevelMagenta']}% Y:{data['tonerLevelYellow']}%")
             results.append(data)
         except Exception as ex:
             log.error(f"  {dev.get('ip','?')}: {ex}")
@@ -1360,7 +1328,8 @@ pause
             <li>Builds <strong>FleetSync_Collector.exe</strong> — no Python needed after this</li>
           </ol>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-            After setup: open <code>C:\FleetSync\{selCustInst.id}leetsync_config.json</code> and add copier IP addresses under <code>devices</code>, then double-click the EXE.
+            After setup: open <code>C:\FleetSync\{selCustInst.id}
+leetsync_config.json</code> and add copier IP addresses under <code>devices</code>, then double-click the EXE.
           </div>
 
           <div className="section-label" style={{ marginTop: 16 }}>Individual files (manual setup)</div>
