@@ -397,13 +397,41 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const downloadCollectorPy = () => {
-    if (!generatedPkg || !selCustInst) return;
-    const c        = selCustInst;
-    const cfg      = generatedPkg.configContent || {};
-    const apiUrl   = instForm.apiUrl;
-    const interval = instForm.collectionInterval;
+// --- config-driven vehicle polling ---
+  const cfg = useMemo(() => loadConfig(), []);
+  const apiUrl = cfg.apiUrl;
+  const interval = cfg.pollInterval;
 
+  useEffect(() => {
+    if (!apiUrl || !interval) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const fetchVehicles = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/vehicles`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) setVehicles(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (err.name !== 'AbortError' && !cancelled) {
+          console.error('Vehicle poll failed:', err);
+        }
+      }
+    };
+
+    fetchVehicles();
+    const id = setInterval(fetchVehicles, interval);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearInterval(id);
+    };
+  }, [apiUrl, interval]);
     _triggerDownload(
 `#!/usr/bin/env python3
 """
