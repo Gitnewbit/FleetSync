@@ -34,3 +34,12 @@ Thumbs.db
 
 # Collector EXE (built locally by client — not committed)
 collector/*.exe
+
+@"
+node_modules/
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+"@ | Set-Content .gitignore
