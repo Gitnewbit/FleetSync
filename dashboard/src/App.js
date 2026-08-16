@@ -2,7 +2,7 @@ import LoginScreen from './LoginScreen';
 import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 
-/* ============================================================
+/* =============================================================
    CONFIGURATION
    ============================================================ */
 // API base — auto-detects environment:
@@ -21,7 +21,7 @@ const API = (() => {
 
 /* ============================================================
    HELPERS
-   ============================================================ */
+   ============================================================1 */
 const fmt    = (n) => (n ?? 0).toLocaleString();
 const fmtM   = (n) => ((n ?? 0) / 1_000_000).toFixed(2) + 'M';
 const fmtTime = (iso) => new Date(iso).toLocaleString();
