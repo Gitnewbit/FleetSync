@@ -45,7 +45,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+// Express 5 handles CORS preflight through the cors middleware above.
 
 app.get('/api/cors-check', (req, res) => {
   res.json({
