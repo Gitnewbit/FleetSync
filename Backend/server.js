@@ -23,12 +23,38 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 // Middleware
-app.use(cors({
-  origin: process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
-    : true,   // true = reflect any origin (fine for self-hosted tool)
-  credentials: true
-}));
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
+  process.env.CORS_ORIGIN ||
+  'https://fleetsync-r9ig.vercel.app,http://localhost:3000')
+  .split(',')
+  .map(o => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    console.warn(`[CORS] Blocked origin: ${origin}`);
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'Accept'],
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+app.get('/api/cors-check', (req, res) => {
+  res.json({
+    ok: true,
+    origin: req.headers.origin || null,
+    allowedOrigins
+  });
+});
+
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 app.use('/downloads', express.static(downloadPath));
@@ -336,8 +362,10 @@ db.run(`
 
       // alerts — old DBs may be missing these
       'ALTER TABLE alerts ADD COLUMN customerId TEXT',
+      'ALTER TABLE alerts ADD COLUMN acknowledged BOOLEAN DEFAULT 0',
       'ALTER TABLE alerts ADD COLUMN acknowledgedBy TEXT',
       'ALTER TABLE alerts ADD COLUMN acknowledgedAt DATETIME',
+      'ALTER TABLE alerts ADD COLUMN createdAt DATETIME DEFAULT CURRENT_TIMESTAMP',
 
       // metrics
       'ALTER TABLE metrics ADD COLUMN customerId TEXT',
@@ -345,14 +373,22 @@ db.run(`
       'ALTER TABLE metrics ADD COLUMN serviceCode TEXT',
       'ALTER TABLE metrics ADD COLUMN serviceMessage TEXT',
     ];
-    // Each runs independently — silently ignores "duplicate column name" errors
+    // Wait for all migrations before database initialization completes.
+    if (migrations.length === 0) {
+      return resolve();
+    }
+
+    let remaining = migrations.length;
+
     migrations.forEach(sql => db.run(sql, (err) => {
       if (err && !err.message.includes('duplicate column')) {
         console.warn('[MIGRATION]', err.message, '|', sql);
       }
+      remaining -= 1;
+      if (remaining === 0) {
+        resolve();
+      }
     }));
-
-    resolve();
   }
 
 });
@@ -2418,7 +2454,7 @@ async function start() {
     await initializeDatabase();
     await seedAdminUser();
     await seedCustomerApiKeys();
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n╔════════════════════════════════════════════════════════╗`);
       console.log(`║     FleetSync Backend API v1.0                         ║`);
       console.log(`║     Production-Ready with Client EXE Generation        ║`);
